@@ -1,0 +1,19 @@
+{
+  "name": "autoundercutter",
+  "version": "0.1.0",
+  "description": "Auto-lists your ticket inventory $1 under the lowest competing listing in the same section and keeps it the lowest as the market moves.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/index.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.js\""
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}

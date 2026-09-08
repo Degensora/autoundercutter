@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AutoUndercutter</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⇩</span>
+      <div>
+        <h1>AutoUndercutter</h1>
+        <div class="sub" id="marketplaceLabel">Connecting…</div>
+      </div>
+    </div>
+    <div class="status">
+      <span class="pill" id="pillMode">mode</span>
+      <span class="pill" id="pillDry">dry run</span>
+      <span class="pill" id="pillEngine">engine</span>
+      <span class="muted" id="lastCycle"></span>
+      <button id="btnRunNow" class="btn primary">Run now</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="card" id="alertCard" hidden>
+      <div id="alertText"></div>
+    </section>
+
+    <section class="grid2">
+      <div class="card">
+        <h2>Add an event</h2>
+        <p class="hint">Paste the StubHub link for the event. The listings you already have in Ticket Attendant for that event will be picked up and repriced.</p>
+        <form id="addEventForm" class="row">
+          <input id="eventUrl" type="text" placeholder="https://www.stubhub.com/…/event/160227629/" autocomplete="off" />
+          <button class="btn primary" type="submit">Add</button>
+          <button class="btn" type="button" id="btnSyncEvents" title="Import every event from your Ticket Attendant account">Refresh events</button>
+        </form>
+        <div class="err" id="addEventError"></div>
+      </div>
+
+      <div class="card">
+        <h2>Rules</h2>
+        <form id="settingsForm" class="settings">
+          <label>Undercut by <span class="unit">$</span><input name="undercutAmount" type="number" step="0.01" min="0" /></label>
+          <label>Check every <input name="pollIntervalSec" type="number" step="1" min="15" /><span class="unit">sec</span></label>
+          <label>New listings' floor
+            <select name="defaultFloorMode">
+              <option value="cost">= my cost</option>
+              <option value="current">= current price</option>
+              <option value="percent">= % of current price</option>
+            </select>
+            <input name="defaultFloorPercent" type="number" step="1" min="1" max="100" class="short" /><span class="unit">%</span>
+          </label>
+          <label class="check"><input name="autoRun" type="checkbox" /> Run automatically</label>
+          <label class="check"><input name="dryRun" type="checkbox" /> Dry run (log only, don't change prices)</label>
+          <label class="check"><input name="raisePrices" type="checkbox" /> Follow the market up too (stay $X under even when competitors raise)</label>
+          <label class="check"><input name="compareQuantity" type="checkbox" /> Only compete with listings that can sell my quantity</label>
+          <label class="check"><input name="wholeDollars" type="checkbox" /> Whole dollars only</label>
+          <label class="check"><input name="autoEnrollListings" type="checkbox" /> Start repricing new listings automatically</label>
+          <div class="row end"><span class="muted" id="settingsSaved"></span><button class="btn primary" type="submit">Save rules</button></div>
+        </form>
+      </div>
+    </section>
+
+    <section id="events"></section>
+
+    <section class="card">
+      <h2>Activity</h2>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+
+  <template id="eventTpl">
+    <article class="card event">
+      <header class="event-head">
+        <div>
+          <h2 class="ev-name"></h2>
+          <div class="muted ev-meta"></div>
+        </div>
+        <div class="row">
+          <label class="switch" title="Turn repricing on/off for this event"><input type="checkbox" class="ev-enabled" /><span>Repricing</span></label>
+          <button class="btn small ev-run">Check now</button>
+          <a class="btn small ev-link" target="_blank" rel="noopener">StubHub ↗</a>
+          <button class="btn small danger ev-remove" title="Remove from this app (does not touch the marketplace)">Remove</button>
+        </div>
+      </header>
+      <div class="ev-error err"></div>
+      <div class="table-wrap">
+        <table class="listings">
+          <thead>
+            <tr>
+              <th>Sec</th><th>Row</th><th>Seats</th><th>Qty</th><th>Cost</th>
+              <th>My price</th><th>Section low</th><th>Floor</th><th>Ceiling</th><th>Undercut</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <details class="market">
+        <summary>Market by section <span class="muted mk-meta"></span></summary>
+        <div class="table-wrap"><table class="mk"><thead><tr><th>Section</th><th>Listings</th><th>Lowest competitor</th><th>Median</th><th>Mine</th></tr></thead><tbody></tbody></table></div>
+      </details>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
