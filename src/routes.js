@@ -67,10 +67,12 @@ export function createRouter({ db, engine, marketplace, config }) {
     '/settings',
     wrap((req, res) => {
       const patch = { ...req.body };
-      for (const k of ['undercutAmount', 'pollIntervalSec', 'defaultFloorPercent']) if (k in patch) patch[k] = Number(patch[k]);
+      for (const k of ['undercutAmount', 'pollIntervalSec', 'defaultFloorPercent', 'staggerAmount', 'repriceCooldownSec']) if (k in patch) patch[k] = Number(patch[k]);
+      if ('repriceCooldownSec' in patch && !(patch.repriceCooldownSec >= 0)) throw new Error('Cooldown must be 0 or more');
+      if ('staggerAmount' in patch && !(patch.staggerAmount >= 0)) throw new Error('Stagger amount must be 0 or more');
       if ('undercutAmount' in patch && !(patch.undercutAmount >= 0)) throw new Error('Undercut amount must be 0 or more');
       if ('pollIntervalSec' in patch && !(patch.pollIntervalSec >= 15)) throw new Error('Poll interval must be at least 15 seconds');
-      for (const k of ['autoRun', 'dryRun', 'compareQuantity', 'raisePrices', 'wholeDollars', 'autoEnrollListings']) if (k in patch) patch[k] = Boolean(patch[k]);
+      for (const k of ['autoRun', 'dryRun', 'compareQuantity', 'raisePrices', 'wholeDollars', 'autoEnrollListings', 'staggerOwnListings']) if (k in patch) patch[k] = Boolean(patch[k]);
       if ('defaultFloorMode' in patch && !['cost', 'current', 'percent'].includes(patch.defaultFloorMode)) throw new Error('Bad floor mode');
       const settings = db.setSettings(patch);
       db.log('info', `Settings updated: ${Object.keys(patch).join(', ')}`);
@@ -180,6 +182,10 @@ export function createRouter({ db, engine, marketplace, config }) {
       if ('undercut_amount' in req.body) {
         patch.undercut_amount = num(req.body.undercut_amount);
         if (patch.undercut_amount != null && !(patch.undercut_amount >= 0)) throw new Error('Undercut must be ≥ 0 or blank');
+      }
+      if ('sell_order' in req.body) {
+        patch.sell_order = num(req.body.sell_order);
+        if (patch.sell_order != null && !Number.isInteger(patch.sell_order)) throw new Error('Sell order must be a whole number or blank');
       }
       if ('status' in req.body) {
         if (!['active', 'paused'].includes(req.body.status)) throw new Error('Status must be active or paused');

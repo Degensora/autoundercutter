@@ -249,43 +249,83 @@ export class Engine {
     }
     this.db.saveSnapshot(event.id, market);
 
-    for (const listing of active) {
-      result.listings++;
-      const competitors = findCompetitors(listing, market, { compareQuantity: settings.compareQuantity });
-      const decision = computeTargetPrice({ listing, competitors, settings });
-      const patch = {
-        last_market_low: decision.marketLow,
-        competitor_count: competitors.length,
-        is_lowest: decision.isLowest ? 1 : 0,
-        last_reason: decision.reason,
-        last_checked_at: new Date().toISOString(),
-        last_error: null,
-      };
-      const label = `${event.name} · sec ${listing.section} row ${listing.row} x${listing.quantity}`;
-      try {
-        if (decision.changed) {
-          if (settings.dryRun) {
-            this.log('info', `[dry run] ${label}: would change ${money(listing.current_price)} → ${money(decision.price)}. ${describeDecision(decision)}`, { eventId: event.id, listingId: listing.id });
-            this.db.addHistory({ listingId: listing.id, oldPrice: listing.current_price, newPrice: decision.price, marketLow: decision.marketLow, reason: decision.reason, dryRun: true });
-          } else {
-            const res = await this.marketplace.updateListingPrice({ ...listing, external_event_id: event.external_event_id }, decision.price);
-            patch.current_price = res.price ?? decision.price;
-            this.db.addHistory({ listingId: listing.id, oldPrice: listing.current_price, newPrice: patch.current_price, marketLow: decision.marketLow, reason: decision.reason, dryRun: false });
-            this.log('info', `${label}: ${money(listing.current_price)} → ${money(patch.current_price)}. ${describeDecision(decision)}${res.warning ? ` (marketplace warning: ${res.warning})` : ''}`, { eventId: event.id, listingId: listing.id });
-          }
-          result.changed++;
-        }
-      } catch (err) {
-        result.errors++;
-        patch.last_error = err.message;
-        this.log('error', `${label}: price update failed — ${err.message}`, { eventId: event.id, listingId: listing.id });
-        if (err.name === 'TicketAttendantAuthError') {
-          this.db.updateListing(listing.id, patch);
-          throw err;
-        }
+    // Group my listings by section so several in one section can be laddered (see pricing.js).
+    const groups = new Map();
+    for (const l of active) {
+      const key = normalizeSection(l.section) || `#${l.id}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(l);
+    }
+    const asc = (a, b) => (a == null) - (b == null) || a - b; // nulls last
+    for (const group of groups.values()) {
+      group.sort((a, b) => asc(a.sell_order, b.sell_order) || asc(a.cost, b.cost) || a.id - b.id);
+      let anchor = null;
+      for (const listing of group) {
+        const { appliedPrice } = await this.repriceListing(event, listing, market, settings, anchor, result);
+        anchor = settings.staggerOwnListings ? appliedPrice : null;
       }
-      this.db.updateListing(listing.id, patch);
     }
     return result;
   }
+
+  /**
+   * Decide and (unless dry run) push the price for one listing.
+   * Returns { decision, appliedPrice } where appliedPrice is what the listing is actually at afterwards.
+   */
+  async repriceListing(event, listing, market, settings, anchorPrice, result) {
+    result.listings++;
+    const competitors = findCompetitors(listing, market, { compareQuantity: settings.compareQuantity });
+    const decision = computeTargetPrice({ listing, competitors, settings, anchorPrice });
+    const now = new Date();
+    const patch = {
+      last_market_low: decision.marketLow,
+      competitor_count: competitors.length,
+      is_lowest: decision.isLowest ? 1 : 0,
+      last_reason: decision.reason,
+      last_checked_at: now.toISOString(),
+      last_error: null,
+      pending_price: null,
+    };
+    const label = `${event.name} · sec ${listing.section} row ${listing.row} x${listing.quantity}`;
+    let appliedPrice = listing.current_price ?? decision.price;
+
+    // Cooldown: a listing we changed recently is left alone so the exchanges can catch up.
+    const cooldownMs = Math.max(0, Number(settings.repriceCooldownSec) || 0) * 1000;
+    const lastChange = listing.last_price_change_at ? new Date(listing.last_price_change_at).getTime() : 0;
+    if (decision.changed && cooldownMs && now.getTime() - lastChange < cooldownMs) {
+      patch.last_reason = 'cooldown';
+      patch.pending_price = decision.price;
+      patch.is_lowest = decision.marketLow == null || Number(listing.current_price) < decision.marketLow ? 1 : 0;
+      this.db.updateListing(listing.id, patch);
+      return { decision, appliedPrice };
+    }
+
+    try {
+      if (decision.changed) {
+        appliedPrice = decision.price;
+        patch.last_price_change_at = now.toISOString();
+        if (settings.dryRun) {
+          this.log('info', `[dry run] ${label}: would change ${money(listing.current_price)} → ${money(decision.price)}. ${describeDecision(decision)}`, { eventId: event.id, listingId: listing.id });
+          this.db.addHistory({ listingId: listing.id, oldPrice: listing.current_price, newPrice: decision.price, marketLow: decision.marketLow, reason: decision.reason, dryRun: true });
+        } else {
+          const res = await this.marketplace.updateListingPrice({ ...listing, external_event_id: event.external_event_id }, decision.price);
+          patch.current_price = res.price ?? decision.price;
+          this.db.addHistory({ listingId: listing.id, oldPrice: listing.current_price, newPrice: patch.current_price, marketLow: decision.marketLow, reason: decision.reason, dryRun: false });
+          this.log('info', `${label}: ${money(listing.current_price)} → ${money(patch.current_price)}. ${describeDecision(decision)}${res.warning ? ` (marketplace warning: ${res.warning})` : ''}`, { eventId: event.id, listingId: listing.id });
+        }
+        result.changed++;
+      }
+    } catch (err) {
+      result.errors++;
+      patch.last_error = err.message;
+      this.log('error', `${label}: price update failed — ${err.message}`, { eventId: event.id, listingId: listing.id });
+      if (err.name === 'TicketAttendantAuthError') {
+        this.db.updateListing(listing.id, patch);
+        throw err;
+      }
+    }
+    this.db.updateListing(listing.id, patch);
+    return { decision, appliedPrice };
+  }
 }
+

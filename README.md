@@ -42,15 +42,35 @@ Three layers, all of which have to miss before one of your own listings could be
    the app set in the last hour, because StubHub's copy of the market can lag a few minutes behind a
    change you just made. Without this, a stale copy of your own listing at its old price could look
    like a competitor and start a ping-pong.
-3. **Your listings never compete with each other.** If you hold two listings in the same section, both
-   are priced against the cheapest *other* seller and end up at the same price, rather than each one
-   dropping $1 under the other every cycle. (If you want them staggered, give one a larger per-listing
-   undercut in the dashboard.)
+3. **Your listings never compete with each other; they are laddered.** If you hold several listings in
+   the same section, the first one is priced $1 under the cheapest *other* seller and each additional
+   one goes a fixed step (default $1) under the previous one, so they sell in a predictable order and
+   never chase each other down. The order is the **Sell order** field on each listing (lowest number
+   sells first); when you leave it blank the cheaper-cost listing leads. Each listing still keeps its
+   own floor. Turn the stagger off in Rules if you would rather have them tie at the same price.
 
 Two things you should also know: the floor stops the "always $1 under" rule from following a competitor
 below what you allow, and the app never moves a price by more than what the market justifies in one
 step, so a bad market read cannot produce a $1 listing. Set a **ceiling** if you also want to cap how
 far it follows the market *up*.
+
+## Cooldown after a change
+
+After the app changes a listing it leaves that listing alone for a while (default **10 minutes**,
+"After changing a listing, leave it alone for…" in Rules). StubHub and the other exchanges take a few
+minutes to pick up a change from Ticket Attendant, and repricing again inside that window would react
+to a market that still shows your *old* price. During the cooldown the dashboard shows what the
+listing *wants* to move to and when it is allowed; the market is still read every cycle. Other
+listings are not affected by one listing's cooldown.
+
+## Which price is compared
+
+Ticket Attendant's StubHub panel (`get-shdata`) reports what competing sellers **listed at, before
+StubHub's buyer fees**: the same number you see on StubHub with *"Show prices without fees"* switched
+on, and the same basis as the gross price you set on your own listing. So "$1 under" means $1 under the
+other seller's list price, and the buyer sees the same fee percentage added to both. If you want to
+double-check, open the event on StubHub with fees hidden and compare the section low with the
+*Market by section* panel in the dashboard.
 
 ## Quick start
 
@@ -89,11 +109,13 @@ restarting the app does not need a new code.
   The event is matched to your Ticket Attendant inventory by StubHub event id and repricing starts.
   "Refresh events" imports every event in your account instead; they come in switched off, flip
   **Repricing** on the ones you want managed.
-* **Per listing** – set a **Floor** (required, pre-filled), an optional **Ceiling**, and an optional
-  per-listing **Undercut** that overrides the global amount. **Pause** stops one listing without
+* **Per listing** – set a **Floor** (required, pre-filled), an optional **Ceiling**, an optional
+  per-listing **Undercut** that overrides the global amount, and a **Sell order** for sections where you
+  hold more than one listing. **Pause** stops one listing without
   affecting the rest. The status column tells you whether you are currently the lowest in the section.
-* **Rules** – undercut amount, how often to check, dry run, quantity matching, whole dollars, how new
-  listings get their floor, and whether new listings start repricing automatically.
+* **Rules** – undercut amount, how often to check, the cooldown after a change, staggering of your own
+  listings, dry run, quantity matching, whole dollars, how new listings get their floor, and whether
+  new listings start repricing automatically.
 * **Market by section** – what the app saw on the last check (lowest competitor, median, count).
 * **Activity** – every price change and why, plus anything that went wrong.
 

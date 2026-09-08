@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS listings (
   floor_price REAL,
   ceiling_price REAL,
   undercut_amount REAL,
+  sell_order INTEGER,              -- lower sells first when several listings share a section
+  last_price_change_at TEXT,       -- when this app last changed the price (cooldown)
+  pending_price REAL,              -- price the app wants but is holding back because of the cooldown
   last_market_low REAL,
   competitor_count INTEGER,
   is_lowest INTEGER,
@@ -87,7 +90,7 @@ const EVENT_COLUMNS = [
 ];
 const LISTING_COLUMNS = [
   'event_id', 'listing_id', 'ta_inventory_id', 'ticket_group_id', 'sh_listing_id', 'item_id', 'section', 'row', 'seats',
-  'quantity', 'cost', 'current_price', 'net_price', 'status', 'floor_price', 'ceiling_price', 'undercut_amount',
+  'quantity', 'cost', 'current_price', 'net_price', 'status', 'floor_price', 'ceiling_price', 'undercut_amount', 'sell_order', 'last_price_change_at', 'pending_price',
   'last_market_low', 'competitor_count', 'is_lowest', 'last_reason', 'last_checked_at', 'last_error', 'gone_since',
 ];
 
@@ -109,6 +112,11 @@ export function openDb(file, defaultSettings = {}) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  // additive migrations for databases created by older versions
+  const listingCols = new Set(db.prepare('PRAGMA table_info(listings)').all().map((c) => c.name));
+  if (!listingCols.has('sell_order')) db.exec('ALTER TABLE listings ADD COLUMN sell_order INTEGER');
+  if (!listingCols.has('last_price_change_at')) db.exec('ALTER TABLE listings ADD COLUMN last_price_change_at TEXT');
+  if (!listingCols.has('pending_price')) db.exec('ALTER TABLE listings ADD COLUMN pending_price REAL');
 
   const api = {
     raw: db,

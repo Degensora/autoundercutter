@@ -9,6 +9,10 @@
  *   4. Never above the ceiling (if one is set).
  *   5. Never below the floor. The floor always wins.
  *   6. If raisePrices is off, never move a price up.
+ *
+ * Several of my own listings in one section are "staggered": the first is priced against the market,
+ * each next one goes `staggerAmount` below the previous (anchorPrice), so they sell in a known order and
+ * never leapfrog each other. The floor still wins for each listing individually.
  */
 
 const SECTION_PREFIX = /^(section|sect|sec)(?=[^a-z]|$)\.?\s*/i;
@@ -81,8 +85,9 @@ function num(v) {
  * Decide what my listing's price should be right now.
  * @returns {{ price:number, reason:string, marketLow:number|null, competitorId:any, changed:boolean, current:number|null, undercut:number, isLowest:boolean }}
  */
-export function computeTargetPrice({ listing, competitors, settings = {} }) {
+export function computeTargetPrice({ listing, competitors, settings = {}, anchorPrice = null }) {
   const undercut = num(listing.undercut_amount) ?? num(settings.undercutAmount) ?? 1;
+  const stagger = num(settings.staggerAmount) ?? 1;
   const floor = num(listing.floor_price) ?? 0;
   const ceiling = num(listing.ceiling_price);
   const current = num(listing.current_price) ?? num(listing.start_price);
@@ -97,6 +102,16 @@ export function computeTargetPrice({ listing, competitors, settings = {} }) {
   } else {
     target = ceiling ?? current ?? floor;
     reason = 'no_competition';
+  }
+
+  // Another of my listings in this section is already going to `anchorPrice`: sit just under it.
+  const anchor = num(anchorPrice);
+  if (anchor != null) {
+    const staggered = anchor - stagger;
+    if (!lowest || staggered < target) {
+      target = staggered;
+      reason = 'stagger';
+    }
   }
 
   if (settings.wholeDollars) target = Math.floor(target);
@@ -127,6 +142,7 @@ export function computeTargetPrice({ listing, competitors, settings = {} }) {
     current,
     undercut,
     isLowest,
+    anchorPrice: anchor,
   };
 }
 
@@ -144,6 +160,8 @@ export function describeDecision(decision) {
       return `Capped at ceiling ${$(decision.price)} (competitor low ${$(decision.marketLow)})`;
     case 'no_competition':
       return `No other listings in section → holding at ${$(decision.price)}`;
+    case 'stagger':
+      return `Staggered under my other listing at ${$(decision.anchorPrice)} → ${$(decision.price)}${decision.marketLow != null ? ` (next competitor ${$(decision.marketLow)})` : ''}`;
     case 'hold':
       return `Competitors moved up (low ${$(decision.marketLow)}) but raising is off → holding at ${$(decision.price)}`;
     default:

@@ -80,3 +80,19 @@ test('per-listing undercut override and whole-dollar rounding', () => {
   const whole = computeTargetPrice({ listing: { section: '112', current_price: 120, floor_price: 10 }, competitors, settings: { undercutAmount: 1, wholeDollars: true } });
   assert.equal(whole.price, 98);
 });
+
+test('staggering: second own listing sits staggerAmount under the first, floor still wins', () => {
+  const competitors = [{ id: 'z', section: '112', price: 300 }];
+  const leader = computeTargetPrice({ listing: { section: '112', current_price: 320, floor_price: 100 }, competitors, settings: { undercutAmount: 1, staggerAmount: 1 } });
+  assert.equal(leader.price, 299);
+  const second = computeTargetPrice({ listing: { section: '112', current_price: 320, floor_price: 100 }, competitors, settings: { undercutAmount: 1, staggerAmount: 1 }, anchorPrice: leader.price });
+  assert.equal(second.price, 298);
+  assert.equal(second.reason, 'stagger');
+  const third = computeTargetPrice({ listing: { section: '112', current_price: 320, floor_price: 297.5 }, competitors, settings: { undercutAmount: 1, staggerAmount: 1 }, anchorPrice: second.price });
+  assert.equal(third.price, 297.5);
+  assert.equal(third.reason, 'floor');
+  // no competition: followers still ladder under the leader's held price
+  const alone = computeTargetPrice({ listing: { section: '112', current_price: 250, floor_price: 100 }, competitors: [], settings: { staggerAmount: 2 }, anchorPrice: 250 });
+  assert.equal(alone.price, 248);
+  assert.equal(alone.reason, 'stagger');
+});

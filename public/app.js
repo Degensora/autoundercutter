@@ -79,6 +79,7 @@ function render() {
       if (el.type === 'checkbox') el.checked = Boolean(v);
       else el.value = v;
     }
+    f.elements.repriceCooldownMin.value = Math.round((settings.repriceCooldownSec || 0) / 60);
     f.elements.defaultFloorPercent.disabled = settings.defaultFloorMode !== 'percent';
   }
 
@@ -124,6 +125,12 @@ function statusFor(l, settings) {
       return ['good', `At ceiling (next is ${money(low)})`];
     case 'no_competition':
       return ['good', 'No other listings in section'];
+    case 'stagger':
+      return ['good', `Staggered under my other listing${low != null ? ` (next competitor ${money(low)})` : ''}`];
+    case 'cooldown': {
+      const until = l.last_price_change_at ? new Date(new Date(l.last_price_change_at).getTime() + (settings.repriceCooldownSec || 0) * 1000) : null;
+      return [l.is_lowest ? 'good' : 'warn', `Changed ${fmtAgo(l.last_price_change_at)} — wants ${money(l.pending_price)}${until ? `, allowed at ${fmtTime(until.toISOString())}` : ''}`];
+    }
     case 'hold':
       return ['warn', `Holding — market rose to ${money(low)} but raising is off`];
     default:
@@ -176,7 +183,7 @@ function renderEvents(events, settings) {
 
     const tbody = $('tbody', $('.listings', node));
     if (!ev.listings.length) {
-      tbody.innerHTML = `<tr><td colspan="12" class="empty">${ev.external_event_id ? 'No open listings for this event in your inventory.' : 'Not matched to your inventory yet.'}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="13" class="empty">${ev.external_event_id ? 'No open listings for this event in your inventory.' : 'Not matched to your inventory yet.'}</td></tr>`;
     }
     for (const l of ev.listings) {
       const tr = document.createElement('tr');
@@ -190,6 +197,7 @@ function renderEvents(events, settings) {
         <td>${inp('floor_price', l.floor_price)}</td>
         <td>${inp('ceiling_price', l.ceiling_price)}</td>
         <td>${inp('undercut_amount', l.undercut_amount)}</td>
+        <td>${inp('sell_order', l.sell_order, '1')}</td>
         <td><span class="st ${cls}">${esc(text)}</span></td>
         <td><button class="btn small" data-toggle="${l.id}" data-status="${l.status}">${l.status === 'paused' ? 'Resume' : 'Pause'}</button></td>`;
       tbody.appendChild(tr);
@@ -329,6 +337,9 @@ settingsForm.addEventListener('submit', async (e) => {
     compareQuantity: f.compareQuantity.checked,
     wholeDollars: f.wholeDollars.checked,
     autoEnrollListings: f.autoEnrollListings.checked,
+    staggerOwnListings: f.staggerOwnListings.checked,
+    staggerAmount: Number(f.staggerAmount.value),
+    repriceCooldownSec: Math.round(Number(f.repriceCooldownMin.value) * 60),
   };
   if (!body.dryRun && state?.settings.dryRun && state.mode !== 'mock') {
     if (!confirm('Turn OFF dry run? AutoUndercutter will start changing real prices in Ticket Attendant, which syncs to StubHub and your other exchanges.')) return;

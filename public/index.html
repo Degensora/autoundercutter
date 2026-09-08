@@ -69,6 +69,7 @@
         <form id="settingsForm" class="settings">
           <label>Undercut by <span class="unit">$</span><input name="undercutAmount" type="number" step="0.01" min="0" /></label>
           <label>Check every <input name="pollIntervalSec" type="number" step="1" min="15" /><span class="unit">sec</span></label>
+          <label>After changing a listing, leave it alone for <input name="repriceCooldownMin" type="number" step="1" min="0" class="short" /><span class="unit">min</span></label>
           <label>New listings' floor
             <select name="defaultFloorMode">
               <option value="cost">= my cost</option>
@@ -80,6 +81,7 @@
           <label class="check"><input name="autoRun" type="checkbox" /> Run automatically</label>
           <label class="check"><input name="dryRun" type="checkbox" /> Dry run (log only, don't change prices)</label>
           <label class="check"><input name="raisePrices" type="checkbox" /> Follow the market up too (stay $X under even when competitors raise)</label>
+          <label class="check"><input name="staggerOwnListings" type="checkbox" /> Stagger my own listings in the same section, <input name="staggerAmount" type="number" step="0.01" min="0" class="short" /><span class="unit">$ apart (lowest "Sell order" sells first)</span></label>
           <label class="check"><input name="compareQuantity" type="checkbox" /> Only compete with listings that can sell my quantity</label>
           <label class="check"><input name="wholeDollars" type="checkbox" /> Whole dollars only</label>
           <label class="check"><input name="autoEnrollListings" type="checkbox" /> Start repricing new listings automatically</label>
@@ -116,7 +118,7 @@
           <thead>
             <tr>
               <th>Sec</th><th>Row</th><th>Seats</th><th>Qty</th><th>Cost</th>
-              <th>My price</th><th>Section low</th><th>Floor</th><th>Ceiling</th><th>Undercut</th><th>Status</th><th></th>
+              <th>My price</th><th>Section low</th><th>Floor</th><th>Ceiling</th><th>Undercut</th><th title="When you have several listings in one section, the lowest number sells first (then by cost)">Sell order</th><th>Status</th><th></th>
             </tr>
           </thead>
           <tbody></tbody>

@@ -43,7 +43,7 @@ function fakeMarketplace() {
 
 function setup(settingsPatch = {}) {
   const db = openDb(':memory:', DEFAULT_SETTINGS);
-  db.setSettings({ dryRun: false, undercutAmount: 1, defaultFloorMode: 'cost', ...settingsPatch });
+  db.setSettings({ dryRun: false, undercutAmount: 1, defaultFloorMode: 'cost', repriceCooldownSec: 0, ...settingsPatch });
   const marketplace = fakeMarketplace();
   const engine = new Engine({ db, marketplace, logger: { log() {}, warn() {}, error() {} } });
   return { db, marketplace, engine };
@@ -163,4 +163,50 @@ test('engine pauses while the marketplace needs a login and resumes afterwards',
   const third = await engine.runCycle();
   assert.equal(third.changed, 2);
   assert.equal(engine.status().authBlocked, false);
+});
+
+test('two own listings in one section are laddered by sell order, not tied or leapfrogged', async () => {
+  const { db, marketplace, engine } = setup({ repriceCooldownSec: 0 });
+  marketplace.state.mine.push({ listingId: 'L-3', taInventoryId: 'ta3', shListingId: 'SH3', section: 'u9', row: 'P', seats: '3-4', quantity: 2, price: 240, cost: 120 });
+  await engine.syncEvents();
+  const [event] = db.listEvents();
+  db.updateEvent(event.id, { enabled: 1 });
+  await engine.runCycle();
+  let l1 = db.listListings(event.id).find((l) => l.listing_id === 'L-1');
+  let l3 = db.listListings(event.id).find((l) => l.listing_id === 'L-3');
+  // default order = cheaper cost first: L-3 (cost 120) leads at 206, L-1 follows at 205
+  assert.equal(l3.current_price, 206);
+  assert.equal(l1.current_price, 205);
+  assert.equal(l1.last_reason, 'stagger');
+  // stable on the next cycle: my own rows in the market are not competitors
+  const before = marketplace.state.updates.length;
+  await engine.runCycle();
+  assert.equal(marketplace.state.updates.length, before);
+  // flip the sell order: L-1 should lead now
+  db.updateListing(l1.id, { sell_order: 1 });
+  db.updateListing(l3.id, { sell_order: 2 });
+  await engine.runCycle();
+  l1 = db.getListing(l1.id);
+  l3 = db.getListing(l3.id);
+  assert.equal(l1.current_price, 206);
+  assert.equal(l3.current_price, 205);
+});
+
+test('cooldown: a listing changed recently is left alone and shows the pending price', async () => {
+  const { db, marketplace, engine } = setup({ repriceCooldownSec: 600 });
+  await engine.syncEvents();
+  const [event] = db.listEvents();
+  db.updateEvent(event.id, { enabled: 1 });
+  await engine.runCycle(); // U 9 -> 206
+  marketplace.state.market[0].price = 200; // competitor drops right after
+  await engine.runCycle();
+  const u9 = db.listListings(event.id).find((l) => l.listing_id === 'L-1');
+  assert.equal(u9.current_price, 206, 'not changed during cooldown');
+  assert.equal(u9.last_reason, 'cooldown');
+  assert.equal(u9.pending_price, 199);
+  assert.equal(u9.is_lowest, 0);
+  // once the cooldown has passed it catches up
+  db.updateListing(u9.id, { last_price_change_at: new Date(Date.now() - 11 * 60 * 1000).toISOString() });
+  await engine.runCycle();
+  assert.equal(db.getListing(u9.id).current_price, 199);
 });

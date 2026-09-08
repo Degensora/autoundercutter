@@ -41,6 +41,9 @@ export const DEFAULT_SETTINGS = {
   dryRun: config.marketplace !== 'mock', // log what would happen instead of pushing price changes
   compareQuantity: false,     // only compete with listings that could sell the same quantity as mine
   raisePrices: true,          // if competitors move up, follow them up (still $1 under)
+  staggerOwnListings: true,   // several of my listings in one section: ladder them instead of tying
+  staggerAmount: 1.0,         // dollars between each of my listings in the same section
+  repriceCooldownSec: 600,    // after changing a listing, leave it alone for this long (StubHub needs time to sync)
   wholeDollars: false,        // round prices down to whole dollars
   autoEnrollListings: true,   // new listings found on an enabled event start repricing automatically
   defaultFloorMode: 'cost',   // 'cost' | 'current' | 'percent' — how the floor is set for new listings
