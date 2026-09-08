@@ -19,6 +19,8 @@
 import { totp } from './totp.js';
 
 export const INVENTORY_COLUMNS = {
+  shStatus: 2,
+  broadcast: 8, // <img src="Content/img/broadcast.png"> or unbroadcast.png
   listingId: 13,
   event: 14,
   eventDate: 15,
@@ -87,7 +89,7 @@ function cellInfo(rawCell) {
   const inner = stripCdata(rawCell);
   const color = inner.match(/color\s*=\s*['"]?([#\w]+)/i)?.[1]?.toLowerCase() ?? null;
   const text = decodeEntities(inner.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
-  return { text, color };
+  return { text, color, raw: inner };
 }
 
 export function parseMoney(text) {
@@ -567,8 +569,11 @@ export class TicketAttendantMarketplace {
         const c = (i) => r.cells[i]?.text ?? '';
         const listingId = c(INVENTORY_COLUMNS.listingId);
         if (!listingId) continue;
+        const bRaw = r.cells[INVENTORY_COLUMNS.broadcast]?.raw ?? '';
+        const broadcast = /unbroadcast/i.test(bRaw) ? false : /broadcast/i.test(bRaw) ? true : null;
         listings.push({
           listingId,
+          broadcast,
           taInventoryId: r.userdata.TAInventoryId ?? null,
           ticketGroupId: r.userdata.TicketGroupId ?? null,
           shListingId: c(INVENTORY_COLUMNS.shListingId) || null,
@@ -672,6 +677,38 @@ export class TicketAttendantMarketplace {
       } else out.push(...sectionRows);
     }
     return out;
+  }
+
+  /**
+   * Broadcast (share) listings to the exchanges — the same call as TA's "Broadcast Tickets" popup.
+   * @param {{listing_id:string, ta_inventory_id?:string}[]} listings
+   * @param {{splits?: string|number}} [opts] StubHub split rule: 0 = do not split, -1 = any but don't leave one, -2 = any, -3 = pairs
+   */
+  async broadcastListings(listings, { splits = -1 } = {}) {
+    if (!listings.length) return { updated: 0 };
+    const body = {
+      taInventoryIds: listings.map((l) => l.ta_inventory_id).filter(Boolean),
+      listingIDs: listings.map((l) => String(l.listing_id)).join(','),
+      splits_SH: String(splits),
+      splits_TN: 0,
+      hide_SH: false,
+      hide_TN: false,
+    };
+    const data = await this.client.postJson('share-save', body);
+    if (!data || data.success === false) throw new Error(data?.message || 'share-save failed');
+    return { updated: listings.length, raw: data };
+  }
+
+  /** Take listings off the exchanges (TA's "Unbroadcast"). */
+  async unbroadcastListings(listings) {
+    if (!listings.length) return { updated: 0 };
+    const body = {
+      Model: listings.map((l) => ({ TAInventoryId: l.ta_inventory_id ?? '', ListingId: String(l.listing_id), TicketGroup_ID_TU: String(l.listing_id) })),
+      splits_SH: 0, splits_TN: 0, hide_SH: 0, hide_TN: 0,
+    };
+    const data = await this.client.postJson('unshare-save', body);
+    if (!data || data.success === false) throw new Error(data?.message || 'unshare-save failed');
+    return { updated: listings.length, raw: data };
   }
 
   /**

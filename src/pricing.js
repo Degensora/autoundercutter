@@ -85,12 +85,13 @@ function num(v) {
  * Decide what my listing's price should be right now.
  * @returns {{ price:number, reason:string, marketLow:number|null, competitorId:any, changed:boolean, current:number|null, undercut:number, isLowest:boolean }}
  */
-export function computeTargetPrice({ listing, competitors, settings = {}, anchorPrice = null }) {
+export function computeTargetPrice({ listing, competitors, settings = {}, anchorPrice = null, fallbackPrice = null }) {
   const undercut = num(listing.undercut_amount) ?? num(settings.undercutAmount) ?? 1;
   const stagger = num(settings.staggerAmount) ?? 1;
   const floor = num(listing.floor_price) ?? 0;
   const ceiling = num(listing.ceiling_price);
-  const current = num(listing.current_price) ?? num(listing.start_price);
+  let current = num(listing.current_price) ?? num(listing.start_price);
+  if (!(current > 0)) current = null; // an unpriced ($0) listing has no "current" price to hold
   const lowest = competitors && competitors.length ? competitors[0] : null;
   const marketLow = lowest ? Number(lowest.price) : null;
 
@@ -100,7 +101,7 @@ export function computeTargetPrice({ listing, competitors, settings = {}, anchor
     target = marketLow - undercut;
     reason = 'undercut';
   } else {
-    target = ceiling ?? current ?? floor;
+    target = ceiling ?? current ?? num(fallbackPrice) ?? floor;
     reason = 'no_competition';
   }
 

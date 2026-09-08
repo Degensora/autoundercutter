@@ -54,6 +54,23 @@ below what you allow, and the app never moves a price by more than what the mark
 step, so a bad market read cannot produce a $1 listing. Set a **ceiling** if you also want to cap how
 far it follows the market *up*.
 
+## New inventory: pick up, price, broadcast
+
+You do not add tickets to this app. Tickets land in Ticket Attendant the way they always do (a PO, a
+Purchase Now order, a Ticketmaster account sync). On its next check the app notices every new listing
+on an event you have turned on and:
+
+1. **Enrols it** for repricing (switch this off with "Start repricing new listings automatically").
+2. **Gives it a floor** – your cost by default.
+3. **Prices it.** If other sellers are in the section it goes $1 under the cheapest one. If nobody is,
+   and the listing came in with no price, it starts at **cost + 30 %** (the "Brand-new listing…"
+   rule). A listing with neither a price nor a cost is flagged in red instead of being listed at $0.
+4. **Broadcasts it** to the exchanges with the split rule you chose (default *any but don't leave
+   one*), using the same call as Ticket Attendant's own *Broadcast Tickets* button. This is done once
+   per listing: if you later take a listing off the exchanges by hand, the app does not put it back.
+
+A listing that is not on the exchanges shows a *Not broadcast* tag in the dashboard.
+
 ## Cooldown after a change
 
 After the app changes a listing it leaves that listing alone for a while (default **10 minutes**,
@@ -149,6 +166,7 @@ web app itself uses, with your normal login:
 | `inventory-search-mt` | your open listings for an event (listing id, section, row, qty, gross price, cost) |
 | `get-shdata` | every StubHub listing for the event, filtered to a section, cheapest first |
 | `change-list-price` | change the gross price of one listing (TA syncs it to the exchanges) |
+| `share-save` | broadcast listings to the exchanges (TA's "Broadcast Tickets" popup) |
 
 Prices are compared on the same basis Ticket Attendant shows in its own StubHub panel (the listing
 price, before StubHub's buyer fees), so "$1 under" means $1 under what the competing seller listed.
@@ -161,8 +179,8 @@ If Ticket Attendant changes its front end, the column positions in `INVENTORY_CO
 * Dry run is on by default for real accounts.
 * A floor is mandatory and is pre-filled from your cost. The floor always wins over the undercut rule.
 * Turning dry run off in the dashboard asks you to confirm.
-* Nothing is ever created or deleted on the marketplace; the app only changes prices of listings that
-  already exist in Ticket Attendant.
+* Nothing is ever created or deleted on the marketplace; the app only changes prices of, and
+  broadcasts, listings that already exist in Ticket Attendant.
 * Your login and session cookies stay in `.env` and the local database (`data/`), both git-ignored.
   Passwords typed into the dashboard are kept in memory only; the session cookie is what gets saved.
 

@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS listings (
   sell_order INTEGER,              -- lower sells first when several listings share a section
   last_price_change_at TEXT,       -- when this app last changed the price (cooldown)
   pending_price REAL,              -- price the app wants but is holding back because of the cooldown
+  broadcast INTEGER,               -- 1 = on the exchanges, 0 = not broadcast, NULL = unknown
+  broadcast_attempted_at TEXT,     -- when this app broadcast it (only ever done once per listing)
   last_market_low REAL,
   competitor_count INTEGER,
   is_lowest INTEGER,
@@ -90,7 +92,7 @@ const EVENT_COLUMNS = [
 ];
 const LISTING_COLUMNS = [
   'event_id', 'listing_id', 'ta_inventory_id', 'ticket_group_id', 'sh_listing_id', 'item_id', 'section', 'row', 'seats',
-  'quantity', 'cost', 'current_price', 'net_price', 'status', 'floor_price', 'ceiling_price', 'undercut_amount', 'sell_order', 'last_price_change_at', 'pending_price',
+  'quantity', 'cost', 'current_price', 'net_price', 'status', 'floor_price', 'ceiling_price', 'undercut_amount', 'sell_order', 'last_price_change_at', 'pending_price', 'broadcast', 'broadcast_attempted_at',
   'last_market_low', 'competitor_count', 'is_lowest', 'last_reason', 'last_checked_at', 'last_error', 'gone_since',
 ];
 
@@ -117,6 +119,8 @@ export function openDb(file, defaultSettings = {}) {
   if (!listingCols.has('sell_order')) db.exec('ALTER TABLE listings ADD COLUMN sell_order INTEGER');
   if (!listingCols.has('last_price_change_at')) db.exec('ALTER TABLE listings ADD COLUMN last_price_change_at TEXT');
   if (!listingCols.has('pending_price')) db.exec('ALTER TABLE listings ADD COLUMN pending_price REAL');
+  if (!listingCols.has('broadcast')) db.exec('ALTER TABLE listings ADD COLUMN broadcast INTEGER');
+  if (!listingCols.has('broadcast_attempted_at')) db.exec('ALTER TABLE listings ADD COLUMN broadcast_attempted_at TEXT');
 
   const api = {
     raw: db,

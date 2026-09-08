@@ -24,6 +24,8 @@ const DEMO_INVENTORY = {
   'mock-1001': [
     { listingId: 'M-5001', section: 'U 9', row: 'N', seats: '1-2', quantity: 2, cost: 150, price: 230 },
     { listingId: 'M-5002', section: 'Floor A', row: '12', seats: '5-8', quantity: 4, cost: 400, price: 650 },
+    // a brand-new PO: no price yet and not broadcast, like inventory that just landed in the POS
+    { listingId: 'M-5003', section: '112', row: 'G', seats: '1-4', quantity: 4, cost: 120, price: 0, broadcast: false },
   ],
   'mock-1002': [{ listingId: 'M-6001', section: '112', row: 'C', seats: '7-8', quantity: 2, cost: 40, price: 95 }],
 };
@@ -35,7 +37,7 @@ export class MockMarketplace {
     this.volatility = volatility;
     this.rand = mulberry32(seed);
     this.events = new Map(DEMO_EVENTS.map((e) => [e.externalEventId, { ...e }]));
-    this.inventory = new Map(Object.entries(DEMO_INVENTORY).map(([k, v]) => [k, v.map((l) => ({ ...l, shListingId: `SH${l.listingId}`, taInventoryId: `TA${l.listingId}` }))]));
+    this.inventory = new Map(Object.entries(DEMO_INVENTORY).map(([k, v]) => [k, v.map((l) => ({ broadcast: true, ...l, shListingId: `SH${l.listingId}`, taInventoryId: `TA${l.listingId}` }))]));
     this.markets = new Map(); // externalEventId -> competitor rows
     this.nextId = 7000;
     this.supportsCreate = false;
@@ -71,6 +73,7 @@ export class MockMarketplace {
     if (!this.markets.has(key)) {
       const rows = [];
       for (const mine of this.inventory.get(key) || []) {
+        if (!(mine.price > 0)) continue; // unpriced demo listing: leave its section empty so the cost+markup rule shows
         const n = 3 + Math.floor(this.rand() * 4);
         for (let i = 0; i < n; i++) {
           rows.push({
@@ -112,6 +115,15 @@ export class MockMarketplace {
       isMine: true,
     }));
     return [...rows.map((r) => ({ ...r, isMine: false })), ...mine].sort((a, b) => a.price - b.price);
+  }
+
+  async broadcastListings(listings) {
+    const all = [...this.inventory.values()].flat();
+    for (const l of listings) {
+      const mine = all.find((x) => String(x.listingId) === String(l.listing_id));
+      if (mine) mine.broadcast = true;
+    }
+    return { updated: listings.length };
   }
 
   async updateListingPrice(listing, newPrice) {

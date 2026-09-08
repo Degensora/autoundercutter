@@ -210,3 +210,48 @@ test('cooldown: a listing changed recently is left alone and shows the pending p
   await engine.runCycle();
   assert.equal(db.getListing(u9.id).current_price, 199);
 });
+
+test('new unpriced, un-broadcast inventory gets a price and is broadcast once; user unbroadcast is respected', async () => {
+  const { db, marketplace, engine } = setup({ newListingMarkupPercent: 30 });
+  const broadcasts = [];
+  marketplace.broadcastListings = async (ls, opts) => {
+    broadcasts.push({ ids: ls.map((l) => l.listing_id), splits: opts.splits });
+    for (const l of ls) marketplace.state.mine.find((m) => m.listingId === l.listing_id).broadcast = true;
+    return { updated: ls.length };
+  };
+  // fresh PO: no price, nobody else in section 305, not broadcast
+  marketplace.state.mine.push({ listingId: 'L-9', taInventoryId: 'ta9', shListingId: null, section: '305', row: 'B', seats: '1-4', quantity: 4, price: 0, cost: 100, broadcast: false });
+  await engine.syncEvents();
+  const [event] = db.listEvents();
+  db.updateEvent(event.id, { enabled: 1 });
+  await engine.runCycle();
+  let l9 = db.listListings(event.id).find((l) => l.listing_id === 'L-9');
+  assert.equal(l9.current_price, 130, 'cost + 30% when there is nobody to undercut');
+  assert.equal(l9.floor_price, 100);
+  assert.equal(l9.broadcast, 1);
+  assert.deepEqual(broadcasts, [{ ids: ['L-9'], splits: '-1' }]);
+  // the user takes it off the exchanges by hand: we do not put it back
+  marketplace.state.mine.find((m) => m.listingId === 'L-9').broadcast = false;
+  await engine.runCycle();
+  l9 = db.getListing(l9.id);
+  assert.equal(l9.broadcast, 0);
+  assert.equal(broadcasts.length, 1);
+  // a competitor shows up in 305: normal undercutting takes over
+  marketplace.state.market.push({ section: '305', row: 'A', quantity: 4, price: 150 });
+  db.updateListing(l9.id, { last_price_change_at: null });
+  await engine.runCycle();
+  assert.equal(db.getListing(l9.id).current_price, 149);
+});
+
+test('unpriced listing with no cost is flagged instead of being listed at $0', async () => {
+  const { db, marketplace, engine } = setup();
+  marketplace.state.mine.push({ listingId: 'L-0', taInventoryId: 'ta0', section: '401', row: 'A', seats: '1-2', quantity: 2, price: 0, cost: 0, broadcast: false });
+  await engine.syncEvents();
+  const [event] = db.listEvents();
+  db.updateEvent(event.id, { enabled: 1 });
+  await engine.runCycle();
+  const l0 = db.listListings(event.id).find((l) => l.listing_id === 'L-0');
+  assert.equal(l0.current_price, 0);
+  assert.match(l0.last_error, /No price and no cost/);
+  assert.equal(marketplace.state.updates.some((u) => u.listingId === 'L-0'), false);
+});

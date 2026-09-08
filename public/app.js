@@ -198,7 +198,7 @@ function renderEvents(events, settings) {
         <td>${inp('ceiling_price', l.ceiling_price)}</td>
         <td>${inp('undercut_amount', l.undercut_amount)}</td>
         <td>${inp('sell_order', l.sell_order, '1')}</td>
-        <td><span class="st ${cls}">${esc(text)}</span></td>
+        <td><span class="st ${cls}">${esc(text)}</span>${l.broadcast === 0 ? ' <span class="st warn" title="Not on the exchanges yet">Not broadcast</span>' : ''}</td>
         <td><button class="btn small" data-toggle="${l.id}" data-status="${l.status}">${l.status === 'paused' ? 'Resume' : 'Pause'}</button></td>`;
       tbody.appendChild(tr);
     }
@@ -340,6 +340,9 @@ settingsForm.addEventListener('submit', async (e) => {
     staggerOwnListings: f.staggerOwnListings.checked,
     staggerAmount: Number(f.staggerAmount.value),
     repriceCooldownSec: Math.round(Number(f.repriceCooldownMin.value) * 60),
+    autoBroadcast: f.autoBroadcast.checked,
+    broadcastSplits: f.broadcastSplits.value,
+    newListingMarkupPercent: Number(f.newListingMarkupPercent.value),
   };
   if (!body.dryRun && state?.settings.dryRun && state.mode !== 'mock') {
     if (!confirm('Turn OFF dry run? AutoUndercutter will start changing real prices in Ticket Attendant, which syncs to StubHub and your other exchanges.')) return;

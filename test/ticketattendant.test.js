@@ -136,3 +136,29 @@ test('marketplace maps events, inventory, market and price updates', async () =>
   assert.equal(priceCall.SHListingIds, 'SH-1');
   assert.equal(priceCall.PriceOption, 0);
 });
+
+test('reads the broadcast flag from the grid and calls share-save the way the TA popup does', async () => {
+  const requests = [];
+  const { fetch } = fakeFetchFactory({
+    'inventory-search-mt': async () => {
+      const mk = (id, img) => {
+        const cells = new Array(55).fill('');
+        cells[8] = `<a href="#"><img src="Content/img/${img}" width="12"></a>`;
+        cells[13] = id; cells[19] = '2'; cells[20] = '112'; cells[21] = 'A'; cells[24] = '$0.00'; cells[27] = '$80.00';
+        return `<row id="${id}"><userdata name="TAInventoryId"><![CDATA[ta-${id}]]></userdata>${cells.map((c) => `<cell><![CDATA[${c}]]></cell>`).join('')}</row>`;
+      };
+      return jsonRes([`<rows>${mk('L-1', 'unbroadcast.png?20250903')}${mk('L-2', 'broadcast.png')}</rows>`, '', '0', '0', '0', '1', '5', '0']);
+    },
+    'share-save': async (u, init) => {
+      requests.push(JSON.parse(init.body));
+      return jsonRes({ success: true });
+    },
+  });
+  const mp = new TicketAttendantMarketplace(new TicketAttendantClient({ baseUrl: 'https://ta.test', cookie: '.ASPXAUTH=x', fetch }));
+  const mine = await mp.getMyListings({ external_event_id: '1', sh_event_id: '1' });
+  assert.equal(mine[0].broadcast, false);
+  assert.equal(mine[1].broadcast, true);
+  assert.equal(mine[0].price, 0);
+  await mp.broadcastListings([{ listing_id: 'L-1', ta_inventory_id: 'ta-L-1' }], { splits: '-1' });
+  assert.deepEqual(requests[0], { taInventoryIds: ['ta-L-1'], listingIDs: 'L-1', splits_SH: '-1', splits_TN: 0, hide_SH: false, hide_TN: false });
+});

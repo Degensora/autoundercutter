@@ -67,12 +67,15 @@ export function createRouter({ db, engine, marketplace, config }) {
     '/settings',
     wrap((req, res) => {
       const patch = { ...req.body };
-      for (const k of ['undercutAmount', 'pollIntervalSec', 'defaultFloorPercent', 'staggerAmount', 'repriceCooldownSec']) if (k in patch) patch[k] = Number(patch[k]);
+      for (const k of ['undercutAmount', 'pollIntervalSec', 'defaultFloorPercent', 'staggerAmount', 'repriceCooldownSec', 'newListingMarkupPercent']) if (k in patch) patch[k] = Number(patch[k]);
+      if ('newListingMarkupPercent' in patch && !(patch.newListingMarkupPercent >= 0)) throw new Error('Markup must be 0 or more');
+      if ('broadcastSplits' in patch && !['0', '-1', '-2', '-3'].includes(String(patch.broadcastSplits))) throw new Error('Bad split option');
+      if ('broadcastSplits' in patch) patch.broadcastSplits = String(patch.broadcastSplits);
       if ('repriceCooldownSec' in patch && !(patch.repriceCooldownSec >= 0)) throw new Error('Cooldown must be 0 or more');
       if ('staggerAmount' in patch && !(patch.staggerAmount >= 0)) throw new Error('Stagger amount must be 0 or more');
       if ('undercutAmount' in patch && !(patch.undercutAmount >= 0)) throw new Error('Undercut amount must be 0 or more');
       if ('pollIntervalSec' in patch && !(patch.pollIntervalSec >= 15)) throw new Error('Poll interval must be at least 15 seconds');
-      for (const k of ['autoRun', 'dryRun', 'compareQuantity', 'raisePrices', 'wholeDollars', 'autoEnrollListings', 'staggerOwnListings']) if (k in patch) patch[k] = Boolean(patch[k]);
+      for (const k of ['autoRun', 'dryRun', 'compareQuantity', 'raisePrices', 'wholeDollars', 'autoEnrollListings', 'staggerOwnListings', 'autoBroadcast']) if (k in patch) patch[k] = Boolean(patch[k]);
       if ('defaultFloorMode' in patch && !['cost', 'current', 'percent'].includes(patch.defaultFloorMode)) throw new Error('Bad floor mode');
       const settings = db.setSettings(patch);
       db.log('info', `Settings updated: ${Object.keys(patch).join(', ')}`);

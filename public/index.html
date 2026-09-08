@@ -85,6 +85,10 @@
           <label class="check"><input name="compareQuantity" type="checkbox" /> Only compete with listings that can sell my quantity</label>
           <label class="check"><input name="wholeDollars" type="checkbox" /> Whole dollars only</label>
           <label class="check"><input name="autoEnrollListings" type="checkbox" /> Start repricing new listings automatically</label>
+          <label class="check"><input name="autoBroadcast" type="checkbox" /> Broadcast new listings to the exchanges once priced, splits:
+            <select name="broadcastSplits"><option value="-1">Any but don't leave one</option><option value="0">Do not split</option><option value="-2">Any</option><option value="-3">Pairs</option></select>
+          </label>
+          <label>Brand-new listing with no price and nobody to undercut: cost + <input name="newListingMarkupPercent" type="number" step="1" min="0" class="short" /><span class="unit">%</span></label>
           <div class="row end"><span class="muted" id="settingsSaved"></span><button class="btn primary" type="submit">Save rules</button></div>
         </form>
       </div>

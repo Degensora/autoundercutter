@@ -179,6 +179,7 @@ export class Engine {
         cost: r.cost ?? null,
         current_price: r.price ?? null,
         net_price: r.netPrice ?? null,
+        broadcast: r.broadcast == null ? null : r.broadcast ? 1 : 0,
       };
       if (existing) {
         const patch = { ...base };
@@ -275,7 +276,10 @@ export class Engine {
   async repriceListing(event, listing, market, settings, anchorPrice, result) {
     result.listings++;
     const competitors = findCompetitors(listing, market, { compareQuantity: settings.compareQuantity });
-    const decision = computeTargetPrice({ listing, competitors, settings, anchorPrice });
+    // A brand-new listing often arrives with no price. With nobody to undercut, start it at cost + markup.
+    const cost = Number(listing.cost) || 0;
+    const fallbackPrice = cost > 0 ? roundMoney(cost * (1 + (Number(settings.newListingMarkupPercent) || 0) / 100)) : null;
+    const decision = computeTargetPrice({ listing, competitors, settings, anchorPrice, fallbackPrice });
     const now = new Date();
     const patch = {
       last_market_low: decision.marketLow,
@@ -288,6 +292,13 @@ export class Engine {
     };
     const label = `${event.name} · sec ${listing.section} row ${listing.row} x${listing.quantity}`;
     let appliedPrice = listing.current_price ?? decision.price;
+
+    if (!(decision.price > 0)) {
+      patch.last_error = 'No price and no cost on this listing — give it a price or a cost in Ticket Attendant, or set its floor here.';
+      if (listing.last_error !== patch.last_error) this.log('warn', `${label}: ${patch.last_error}`, { eventId: event.id, listingId: listing.id });
+      this.db.updateListing(listing.id, patch);
+      return { decision, appliedPrice };
+    }
 
     // Cooldown: a listing we changed recently is left alone so the exchanges can catch up.
     const cooldownMs = Math.max(0, Number(settings.repriceCooldownSec) || 0) * 1000;
@@ -325,7 +336,30 @@ export class Engine {
       }
     }
     this.db.updateListing(listing.id, patch);
+    await this.maybeBroadcast(event, { ...listing, ...patch }, appliedPrice, settings, label);
     return { decision, appliedPrice };
+  }
+
+  /**
+   * New inventory usually lands in the POS un-broadcast. Once it has a price, put it on the exchanges.
+   * Done at most once per listing, so if you deliberately unbroadcast something later we leave it alone.
+   */
+  async maybeBroadcast(event, listing, price, settings, label) {
+    if (!settings.autoBroadcast) return;
+    if (listing.broadcast !== 0 || listing.broadcast_attempted_at || !(price > 0) || listing.last_error) return;
+    if (typeof this.marketplace.broadcastListings !== 'function') return;
+    if (settings.dryRun) {
+      if (!listing.pending_price) this.log('info', `[dry run] ${label}: would broadcast to the exchanges at ${money(price)}`, { eventId: event.id, listingId: listing.id });
+      return;
+    }
+    try {
+      await this.marketplace.broadcastListings([listing], { splits: settings.broadcastSplits });
+      this.db.updateListing(listing.id, { broadcast: 1, broadcast_attempted_at: new Date().toISOString() });
+      this.log('info', `${label}: broadcast to the exchanges at ${money(price)}`, { eventId: event.id, listingId: listing.id });
+    } catch (err) {
+      this.db.updateListing(listing.id, { broadcast_attempted_at: new Date().toISOString(), last_error: `Broadcast failed: ${err.message}` });
+      this.log('error', `${label}: broadcast failed — ${err.message}`, { eventId: event.id, listingId: listing.id });
+    }
   }
 }
 

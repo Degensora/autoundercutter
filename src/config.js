@@ -43,7 +43,10 @@ export const DEFAULT_SETTINGS = {
   raisePrices: true,          // if competitors move up, follow them up (still $1 under)
   staggerOwnListings: true,   // several of my listings in one section: ladder them instead of tying
   staggerAmount: 1.0,         // dollars between each of my listings in the same section
-  repriceCooldownSec: 600,    // after changing a listing, leave it alone for this long (StubHub needs time to sync)
+  repriceCooldownSec: 600,
+  autoBroadcast: true,        // new listings that are not broadcast yet get broadcast once they have a price
+  broadcastSplits: '-1',      // StubHub split rule for those: 0 no split, -1 any but don't leave one, -2 any, -3 pairs
+  newListingMarkupPercent: 30, // price for a brand-new unpriced listing with no competition: cost + this %    // after changing a listing, leave it alone for this long (StubHub needs time to sync)
   wholeDollars: false,        // round prices down to whole dollars
   autoEnrollListings: true,   // new listings found on an enabled event start repricing automatically
   defaultFloorMode: 'cost',   // 'cost' | 'current' | 'percent' — how the floor is set for new listings
