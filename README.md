@@ -31,6 +31,27 @@ A brand-new listing gets a floor automatically so nothing sells for less than yo
 **your cost** from Ticket Attendant (falls back to the current price when there is no cost); you can
 change that rule and edit each floor in the dashboard.
 
+## How it avoids undercutting itself
+
+Three layers, all of which have to miss before one of your own listings could be mistaken for a rival:
+
+1. **Ticket Attendant's own flag.** Every market request includes your StubHub and POS listing ids, so
+   rows Ticket Attendant knows are yours come back marked and are dropped.
+2. **Fingerprint match.** Any market row whose section, row, quantity **and** price equal one of your
+   listings is treated as yours. This is checked at the listing's current price *and* at every price
+   the app set in the last hour, because StubHub's copy of the market can lag a few minutes behind a
+   change you just made. Without this, a stale copy of your own listing at its old price could look
+   like a competitor and start a ping-pong.
+3. **Your listings never compete with each other.** If you hold two listings in the same section, both
+   are priced against the cheapest *other* seller and end up at the same price, rather than each one
+   dropping $1 under the other every cycle. (If you want them staggered, give one a larger per-listing
+   undercut in the dashboard.)
+
+Two things you should also know: the floor stops the "always $1 under" rule from following a competitor
+below what you allow, and the app never moves a price by more than what the market justifies in one
+step, so a bad market read cannot produce a $1 listing. Set a **ceiling** if you also want to cap how
+far it follows the market *up*.
+
 ## Quick start
 
 Requirements: Node.js 22.13 or newer.
@@ -46,6 +67,21 @@ without touching anything. Watch the Activity panel for a few cycles, then untic
 when you are happy.
 
 Without Ticket Attendant credentials it starts against a **simulated market** so you can try it safely.
+
+## Logging in (authenticator)
+
+Ticket Attendant asks for an authenticator code after your password. The app handles that three ways;
+pick whichever suits you:
+
+| Option | How | When you have to do something |
+| --- | --- | --- |
+| **Code in the dashboard** (default) | Put `TA_USERNAME` / `TA_PASSWORD` in `.env` (or type them in the dashboard). The app posts them, sees the authenticator page, and shows a *"enter your code"* box at the top of the dashboard. Type the 6 digits from your app. | Once per login. The app logs in with *"keep me signed in for 2 weeks"* and stores the session, so this is roughly once every two weeks, and the dashboard turns red and pauses repricing until you do. |
+| **Automatic codes** | Put the secret behind your authenticator app in `.env` as `TA_TOTP_SECRET` (the base32 string shown when you set up the authenticator, or the `otpauth://` URL from the QR code — many apps let you export it, or ask Ticket Attendant support to reset it and copy the new one). | Never. The app generates the same codes your phone does and logs itself back in whenever the session expires. |
+| **Paste a cookie** | Log in normally in your browser with *keep me signed in* ticked, copy the `.ASPXAUTH` / `ASP.NET_SessionId` cookies, and paste them into the dashboard (or `TA_COOKIE` in `.env`). | Whenever that browser session expires (about two weeks if you ticked keep me signed in, otherwise within a day). |
+
+While the app is waiting for a code it pauses repricing and logs that once; nothing else is touched.
+As soon as you log in it runs a check immediately. Sessions are stored in the local database, so
+restarting the app does not need a new code.
 
 ## Using the dashboard
 
@@ -72,7 +108,8 @@ All configuration lives in `.env` (see `.env.example`).
 | --- | --- |
 | `MARKETPLACE` | `ticketattendant` (real account) or `mock` (simulation). Defaults to `ticketattendant` when TA credentials are present. |
 | `TA_USERNAME`, `TA_PASSWORD` | Your Ticket Attendant Terminal login. The app logs in with "keep me signed in" and re-logs in automatically when the session expires. |
-| `TA_COOKIE` | Optional fallback: a browser `Cookie` header (`.ASPXAUTH=…; ASP.NET_SessionId=…`). Sessions expire within a day, so prefer username/password. |
+| `TA_TOTP_SECRET` | Optional: your authenticator secret, so the app answers the code prompt itself (see *Logging in*). |
+| `TA_COOKIE` | Optional fallback: a browser `Cookie` header (`.ASPXAUTH=…; ASP.NET_SessionId=…`). |
 | `TA_BASE_URL` | Defaults to `https://terminal.ticketattendant.com`. |
 | `TA_MAX_MARKET_PAGES` | StubHub rows come 50 per page, cheapest first; pages read per section (default 2). |
 | `PORT`, `DATA_DIR` | Web port (3000) and where the SQLite database lives (`./data`). |
@@ -105,6 +142,7 @@ If Ticket Attendant changes its front end, the column positions in `INVENTORY_CO
 * Nothing is ever created or deleted on the marketplace; the app only changes prices of listings that
   already exist in Ticket Attendant.
 * Your login and session cookies stay in `.env` and the local database (`data/`), both git-ignored.
+  Passwords typed into the dashboard are kept in memory only; the session cookie is what gets saved.
 
 ## Development
 
@@ -118,7 +156,8 @@ Layout:
 ```
 src/pricing.js                     pure repricing rules (no I/O)
 src/engine.js                      the loop: sync listings → read market → decide → push
-src/marketplaces/ticketattendant.js Ticket Attendant Terminal connector (login, parsing, endpoints)
+src/marketplaces/ticketattendant.js Ticket Attendant Terminal connector (login + authenticator, parsing, endpoints)
+src/marketplaces/totp.js           authenticator (TOTP) code generation
 src/marketplaces/mock.js           simulated market for trying things out
 src/db.js                          SQLite storage (node:sqlite, no native build needed)
 src/routes.js, src/index.js        REST API + static dashboard server

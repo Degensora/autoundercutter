@@ -16,6 +16,8 @@
 
 // Column layout of the event-inventory grid for TA accounts on POS type 3/4/5 (SkyBox-style grid).
 // Taken from the TA front end (gridEventHeader). Only the columns we use are named here.
+import { totp } from './totp.js';
+
 export const INVENTORY_COLUMNS = {
   listingId: 13,
   event: 14,
@@ -186,8 +188,34 @@ export class TicketAttendantClient {
     this.jar = new CookieJar(opts.cookie);
     this.onCookies = opts.onCookies || (() => {});
     this.fetch = opts.fetch || globalThis.fetch.bind(globalThis);
+    this.totpSecret = opts.totpSecret || null;
     this.lastLoginAt = null;
     this.loginPromise = null;
+    /** 'ok' | 'needs_credentials' | 'needs_code' | 'error' */
+    this.authState = this.jar.has('.ASPXAUTH') ? 'ok' : this.canLogin ? 'needs_login' : 'needs_credentials';
+    this.authMessage = null;
+    this.pendingLogin = null; // the authenticator form waiting for a code
+  }
+
+  setCredentials(username, password) {
+    this.username = username || null;
+    this.password = password || null;
+    if (this.canLogin && this.authState === 'needs_credentials') this.authState = 'needs_login';
+  }
+
+  setTotpSecret(secret) {
+    this.totpSecret = secret || null;
+  }
+
+  /** Replace the session with a cookie header pasted from the browser. */
+  setCookieHeader(header) {
+    this.jar.clear();
+    this.jar.setFromHeader(header);
+    if (!this.jar.has('.ASPXAUTH')) throw new TicketAttendantAuthError('That cookie does not contain an .ASPXAUTH value.');
+    this.authState = 'ok';
+    this.authMessage = null;
+    this.pendingLogin = null;
+    this.onCookies(this.jar.header());
   }
 
   get canLogin() {
@@ -199,8 +227,12 @@ export class TicketAttendantClient {
       baseUrl: this.baseUrl,
       hasSession: this.jar.has('.ASPXAUTH'),
       canLogin: this.canLogin,
+      hasTotp: Boolean(this.totpSecret),
       username: this.username,
       lastLoginAt: this.lastLoginAt,
+      authState: this.authState,
+      authMessage: this.authMessage,
+      codePrompt: this.pendingLogin?.prompt ?? null,
     };
   }
 
@@ -227,13 +259,21 @@ export class TicketAttendantClient {
     }
   }
 
-  /** Log in with username/password. Safe to call concurrently. */
+  /**
+   * Log in with username/password. Ticket Attendant then asks for an authenticator code on a second
+   * page; if a TOTP secret is configured the code is generated and submitted automatically, otherwise
+   * the client parks in authState 'needs_code' until submitCode() is called (from the dashboard).
+   * Safe to call concurrently.
+   */
   async login() {
-    if (!this.canLogin) throw new TicketAttendantAuthError('Ticket Attendant session expired and no TA_USERNAME / TA_PASSWORD is configured.');
+    if (!this.canLogin) {
+      this.authState = 'needs_credentials';
+      throw new TicketAttendantAuthError('Ticket Attendant session expired and no username / password is configured.');
+    }
     if (this.loginPromise) return this.loginPromise;
     this.loginPromise = (async () => {
       this.jar.clear();
-      // Prime the ASP.NET session cookie and pick up any anti-forgery token on the form.
+      this.pendingLogin = null;
       const page = await this._fetch(`${this.baseUrl}/login?ReturnUrl=%2f`, { headers: { Accept: 'text/html' } });
       const html = await page.text();
       const token = html.match(/name="__RequestVerificationToken"[^>]*value="([^"]+)"/)?.[1];
@@ -243,24 +283,137 @@ export class TicketAttendantClient {
       form.append('KeepSignedIn', 'true');
       form.append('KeepSignedIn', 'false');
       if (token) form.set('__RequestVerificationToken', token);
-      const res = await this._fetch(`${this.baseUrl}/login?ReturnUrl=%2f`, {
+      let res = await this._fetch(`${this.baseUrl}/login?ReturnUrl=%2f`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/html', Referer: `${this.baseUrl}/login` },
         body: form.toString(),
       });
-      if (!this.jar.has('.ASPXAUTH')) {
-        const body = await res.text().catch(() => '');
-        const hint = body.match(/validation-summary-errors[\s\S]*?<li>([^<]+)</)?.[1] || body.match(/<div[^>]*class="[^"]*alert[^"]*"[^>]*>([^<]+)</)?.[1];
-        throw new TicketAttendantAuthError(`Ticket Attendant login failed${hint ? `: ${hint.trim()}` : ` (HTTP ${res.status})`}. Check TA_USERNAME / TA_PASSWORD.`);
+      // Follow one redirect (e.g. to the authenticator page) so we can inspect it.
+      res = await this._followOnce(res);
+      if (this.jar.has('.ASPXAUTH')) return this._loginDone();
+
+      const body = await res.text().catch(() => '');
+      const authForm = TicketAttendantClient.parseAuthenticatorForm(body, res.url || `${this.baseUrl}/login`);
+      if (!authForm) {
+        this.authState = 'error';
+        this.authMessage = TicketAttendantClient._loginErrorHint(body) || `Login failed (HTTP ${res.status}). Check the username / password.`;
+        throw new TicketAttendantAuthError(`Ticket Attendant login failed: ${this.authMessage}`);
       }
-      this.lastLoginAt = new Date().toISOString();
-      this.onCookies(this.jar.header());
+      this.pendingLogin = authForm;
+      if (this.totpSecret) {
+        await this.submitCode(totp(this.totpSecret));
+        return;
+      }
+      this.authState = 'needs_code';
+      this.authMessage = 'Ticket Attendant is asking for your authenticator code.';
+      throw new TicketAttendantAuthError('Ticket Attendant needs an authenticator code. Enter it in the dashboard (or set TA_TOTP_SECRET).');
     })();
     try {
       return await this.loginPromise;
     } finally {
       this.loginPromise = null;
     }
+  }
+
+  /** Submit the authenticator code for a login that is waiting on one. */
+  async submitCode(code) {
+    const pending = this.pendingLogin;
+    if (!pending) throw new TicketAttendantAuthError('No login is waiting for a code. Start the login first.');
+    const clean = String(code || '').replace(/\s+/g, '');
+    if (!clean) throw new TicketAttendantAuthError('Enter the code from your authenticator app.');
+    const form = new URLSearchParams();
+    for (const [k, v] of Object.entries(pending.fields)) form.append(k, v);
+    form.set(pending.codeField, clean);
+    for (const f of pending.rememberFields) if (!form.has(f)) form.append(f, 'true');
+    let res = await this._fetch(pending.action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/html', Referer: pending.referer },
+      body: form.toString(),
+    });
+    res = await this._followOnce(res);
+    if (this.jar.has('.ASPXAUTH')) return this._loginDone();
+    const body = await res.text().catch(() => '');
+    const again = TicketAttendantClient.parseAuthenticatorForm(body, res.url || pending.action);
+    if (again) this.pendingLogin = again; // wrong code: the form is shown again
+    this.authState = 'needs_code';
+    this.authMessage = TicketAttendantClient._loginErrorHint(body) || 'The authenticator code was not accepted. Try again with a fresh code.';
+    throw new TicketAttendantAuthError(this.authMessage);
+  }
+
+  _loginDone() {
+    this.lastLoginAt = new Date().toISOString();
+    this.authState = 'ok';
+    this.authMessage = null;
+    this.pendingLogin = null;
+    this.onCookies(this.jar.header());
+  }
+
+  async _followOnce(res) {
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location');
+      if (loc) {
+        const next = new URL(loc, this.baseUrl).toString();
+        const r = await this._fetch(next, { headers: { Accept: 'text/html' } });
+        if (!r.url) Object.defineProperty(r, 'url', { value: next });
+        return r;
+      }
+    }
+    return res;
+  }
+
+  static _loginErrorHint(html) {
+    const m =
+      html.match(/validation-summary-errors[\s\S]*?<li>([^<]+)</) ||
+      html.match(/class="[^"]*(?:field-validation-error|text-danger|alert-danger|error)[^"]*"[^>]*>\s*([^<]{3,200})</i);
+    return m ? m[1].trim() : null;
+  }
+
+  /**
+   * Find the "enter your authenticator code" form on a page. Returns null when the page has no such
+   * form (i.e. the login simply failed). Works generically: the code field is the one visible text /
+   * number / tel / password input without a value.
+   */
+  static parseAuthenticatorForm(html, pageUrl) {
+    if (!html || !/<form/i.test(html)) return null;
+    const forms = [...html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/gi)];
+    for (const f of forms) {
+      const attrs = f[1];
+      const body = f[2];
+      const inputs = [...body.matchAll(/<input\b[^>]*>/gi)].map((m) => {
+        const tag = m[0];
+        const get = (n) => tag.match(new RegExp(`\\b${n}\\s*=\\s*"([^"]*)"`, 'i'))?.[1] ?? tag.match(new RegExp(`\\b${n}\\s*=\\s*'([^']*)'`, 'i'))?.[1] ?? null;
+        return { name: get('name'), type: (get('type') || 'text').toLowerCase(), value: get('value'), id: get('id'), tag };
+      });
+      if (inputs.some((i) => /^(username|password)$/i.test(i.name || ''))) continue; // that's the normal login form
+      const codeField = inputs.find((i) => i.name && ['text', 'number', 'tel', 'password'].includes(i.type) && !i.value && /code|otp|token|verif|auth|pin/i.test(`${i.name} ${i.id} ${i.tag}`))
+        || inputs.find((i) => i.name && ['text', 'number', 'tel', 'password'].includes(i.type) && !i.value);
+      if (!codeField) continue;
+      const fields = {};
+      const rememberFields = [];
+      for (const i of inputs) {
+        if (!i.name || i.name === codeField.name) continue;
+        if (i.type === 'hidden') {
+          // ASP.NET renders a hidden "false" twin after every checkbox; keep only one value per name
+          if (!(i.name in fields)) fields[i.name] = i.value ?? '';
+        } else if (i.type === 'checkbox') {
+          rememberFields.push(i.name);
+          fields[i.name] = i.value || 'true'; // remember this device / trust browser
+        } else if (i.type !== 'submit' && i.type !== 'button' && i.value != null) fields[i.name] = i.value;
+      }
+      const actionAttr = attrs.match(/\baction\s*=\s*"([^"]*)"/i)?.[1] ?? attrs.match(/\baction\s*=\s*'([^']*)'/i)?.[1] ?? '';
+      const action = new URL(actionAttr || pageUrl, pageUrl).toString();
+      const label = body.match(new RegExp(`<label[^>]*for="${codeField.id || codeField.name}"[^>]*>([^<]+)<`, 'i'))?.[1];
+      const prompt = (label || body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160)) || 'Enter your authenticator code';
+      return { action, referer: pageUrl, fields, codeField: codeField.name, rememberFields, prompt: prompt.trim() };
+    }
+    return null;
+  }
+
+  async _ensureSession() {
+    if (this.jar.has('.ASPXAUTH')) return;
+    if (this.authState === 'needs_code') throw new TicketAttendantAuthError('Waiting for the authenticator code. Enter it in the dashboard.');
+    if (!this.canLogin) throw new TicketAttendantAuthError('Not logged in to Ticket Attendant. Log in from the dashboard.');
+    await this.login();
   }
 
   static _looksLoggedOut(res) {
@@ -274,7 +427,7 @@ export class TicketAttendantClient {
 
   /** POST JSON to a TA endpoint and return the parsed body. Re-logs in once if the session is dead. */
   async postJson(path, body, { retry = true } = {}) {
-    if (!this.jar.has('.ASPXAUTH') && this.canLogin) await this.login();
+    await this._ensureSession();
     const url = `${this.baseUrl}/${path.replace(/^\/+/, '')}`;
     const res = await this._fetch(url, {
       method: 'POST',
@@ -291,7 +444,7 @@ export class TicketAttendantClient {
 
   /** GET a TA endpoint with query params. */
   async getJson(path, params, { retry = true } = {}) {
-    if (!this.jar.has('.ASPXAUTH') && this.canLogin) await this.login();
+    await this._ensureSession();
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null) qs.set(k, String(v));
     const url = `${this.baseUrl}/${path.replace(/^\/+/, '')}${qs.toString() ? `?${qs}` : ''}`;
@@ -301,11 +454,13 @@ export class TicketAttendantClient {
 
   async _handle(res, retryFn, retry, path) {
     if (TicketAttendantClient._looksLoggedOut(res)) {
+      this.jar.cookies.delete('.ASPXAUTH');
       if (retry && this.canLogin) {
         await this.login();
         return retryFn();
       }
-      throw new TicketAttendantAuthError('Ticket Attendant session expired. Log in again (set TA_USERNAME / TA_PASSWORD, or refresh TA_COOKIE).');
+      if (this.authState === 'ok') this.authState = this.canLogin ? 'needs_login' : 'needs_credentials';
+      throw new TicketAttendantAuthError('Ticket Attendant session expired. Log in again from the dashboard.');
     }
     const text = await res.text();
     if (!res.ok) throw new Error(`Ticket Attendant ${path} failed: HTTP ${res.status} ${text.slice(0, 300)}`);

@@ -21,6 +21,8 @@ export const config = {
     password: env('TA_PASSWORD'),
     /** Optional: a raw Cookie header value copied from the browser, e.g. ".ASPXAUTH=...; ASP.NET_SessionId=..." */
     cookie: env('TA_COOKIE'),
+    /** Optional: the base32 secret (or otpauth:// URL) behind your authenticator app, for fully automatic logins. */
+    totpSecret: env('TA_TOTP_SECRET'),
     userAgent: env(
       'TA_USER_AGENT',
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36',

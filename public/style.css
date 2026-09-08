@@ -63,3 +63,8 @@ details.market summary { cursor: pointer; color: var(--muted); }
 .log time { color: var(--muted); margin-right: 8px; }
 .empty { color: var(--muted); padding: 10px 0; }
 #alertCard { border-color: rgba(255,107,107,.5); background: #22171a; }
+#authCard { border-color: rgba(245,184,61,.5); }
+#authCard.ok { border-color: var(--line); }
+.short-input { flex: 0 0 220px !important; min-width: 0 !important; letter-spacing: .15em; }
+.cookie-alt { margin-top: 8px; }
+.cookie-alt summary { cursor: pointer; }

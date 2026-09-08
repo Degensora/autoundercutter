@@ -15,6 +15,7 @@ export function createMarketplace(config, { db, log = () => {} } = {}) {
       username: ta.username,
       password: ta.password,
       cookie: ta.cookie || saved || undefined,
+      totpSecret: ta.totpSecret,
       userAgent: ta.userAgent,
       timeoutMs: ta.requestTimeoutMs,
       onCookies: (header) => {

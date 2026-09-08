@@ -26,7 +26,7 @@ async function api(method, path, body) {
 
 function editingSomething() {
   const el = document.activeElement;
-  return el && (el.tagName === 'INPUT' || el.tagName === 'SELECT') && el.closest('#events, #settingsForm, #addEventForm');
+  return el && (el.tagName === 'INPUT' || el.tagName === 'SELECT') && el.closest('#events, #settingsForm, #addEventForm, #authCard');
 }
 
 async function refresh() {
@@ -60,16 +60,16 @@ function render() {
   pillDry.className = `pill ${settings.dryRun ? 'warn' : 'on'}`;
   const pillEngine = $('#pillEngine');
   const auth = marketplace.hasSession || mode === 'mock';
-  pillEngine.textContent = !auth ? 'Not logged in' : engine.cycleInProgress ? 'Checking…' : settings.autoRun ? 'Auto' : 'Paused';
-  pillEngine.className = `pill ${!auth ? 'bad' : settings.autoRun ? 'on' : ''}`;
+  const needsHuman = mode !== 'mock' && (marketplace.authState === 'needs_code' || !auth);
+  pillEngine.textContent = needsHuman ? (marketplace.authState === 'needs_code' ? 'Needs auth code' : 'Not logged in') : engine.cycleInProgress ? 'Checking…' : settings.autoRun ? 'Auto' : 'Paused';
+  pillEngine.className = `pill ${needsHuman ? 'bad' : settings.autoRun ? 'on' : ''}`;
   const sum = engine.lastCycleSummary;
   $('#lastCycle').textContent = engine.lastCycleAt
     ? `Last check ${fmtAgo(engine.lastCycleAt)} · ${sum.listings} listings, ${sum.changed} changed${sum.errors ? `, ${sum.errors} errors` : ''}`
     : 'No check yet';
 
-  if (mode !== 'mock' && !marketplace.hasSession && !marketplace.canLogin) {
-    showAlert('Not logged in to Ticket Attendant. Set TA_USERNAME and TA_PASSWORD in .env and restart.');
-  } else showAlert(null);
+  showAlert(null);
+  renderAuth(marketplace, mode, engine);
 
   if (!settingsDirty && !editingSomething()) {
     const f = $('#settingsForm');
@@ -85,6 +85,30 @@ function render() {
   if (!editingSomething()) renderEvents(events, settings);
   renderLog(log);
 }
+
+function renderAuth(mp, mode, engine) {
+  const card = $('#authCard');
+  if (mode === 'mock') {
+    card.hidden = true;
+    return;
+  }
+  const state = mp.authState || (mp.hasSession ? 'ok' : 'needs_credentials');
+  const loggedIn = state === 'ok' && mp.hasSession;
+  card.hidden = loggedIn && !authCardPinned;
+  card.classList.toggle('ok', loggedIn);
+  $('#loginForm').hidden = !(state === 'needs_credentials' || state === 'needs_login' || state === 'error' || (loggedIn && authCardPinned));
+  $('#codeForm').hidden = state !== 'needs_code';
+  const hint = $('#authHint');
+  if (loggedIn) hint.textContent = `Logged in${mp.username ? ` as ${mp.username}` : ''}${mp.lastLoginAt ? ` (since ${fmtTime(mp.lastLoginAt)})` : ''}. The "keep me signed in" session lasts about two weeks; you will be asked for a new authenticator code when it expires.`;
+  else if (state === 'needs_code') hint.textContent = `${mp.codePrompt || 'Ticket Attendant is asking for your authenticator code.'} Open your authenticator app and enter the current code.${engine.authBlocked ? ' Repricing is paused until you do.' : ''}`;
+  else if (state === 'needs_login') hint.textContent = 'Session expired. Click "Log in" to sign in again with the saved username and password; you will then be asked for an authenticator code.';
+  else if (state === 'error') hint.textContent = mp.authMessage || 'Login failed.';
+  else hint.textContent = 'Not logged in to Ticket Attendant. Enter your login (or set TA_USERNAME / TA_PASSWORD in .env). Repricing is paused until you do.';
+  if (mp.username && !$('#loginUser').value) $('#loginUser').value = mp.username;
+  if (mp.canLogin) $('#loginPass').placeholder = 'Password (saved in .env — leave blank to use it)';
+  if (mp.authMessage && state === 'needs_code') $('#authError').textContent = mp.authMessage.startsWith('Ticket Attendant is asking') ? '' : mp.authMessage;
+}
+let authCardPinned = false;
 
 function statusFor(l, settings) {
   if (l.status === 'paused') return ['muted', 'Paused'];
@@ -211,6 +235,42 @@ function renderLog(log) {
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
+
+// ---- login wiring ----
+async function authCall(path, body) {
+  $('#authError').textContent = '';
+  try {
+    const r = await api('POST', path, body);
+    if (r.needsCode) $('#loginCode').focus();
+    await refresh();
+    return r;
+  } catch (err) {
+    $('#authError').textContent = err.message;
+    await refresh();
+  }
+}
+$('#loginForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const username = $('#loginUser').value.trim();
+  const password = $('#loginPass').value;
+  authCall('/auth/login', password ? { username, password } : {});
+  $('#loginPass').value = '';
+});
+$('#codeForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  authCall('/auth/code', { code: $('#loginCode').value.trim() });
+  $('#loginCode').value = '';
+});
+$('#btnRestartLogin').addEventListener('click', () => authCall('/auth/login', {}));
+$('#cookieForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  authCall('/auth/cookie', { cookie: $('#cookieValue').value.trim() });
+  $('#cookieValue').value = '';
+});
+$('#marketplaceLabel').addEventListener('click', () => {
+  authCardPinned = !authCardPinned;
+  refresh();
+});
 
 // ---- wiring ----
 $('#addEventForm').addEventListener('submit', async (e) => {

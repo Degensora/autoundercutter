@@ -126,3 +126,41 @@ test('listings that disappear are marked gone, paused listings are left alone', 
   assert.equal(all.find((l) => l.listing_id === 'L-2').current_price, 504);
   assert.equal(marketplace.state.updates.filter((u) => u.listingId === 'L-2').length, 1);
 });
+
+test('my own stale row in the market data (old price still shown) is not treated as a competitor', async () => {
+  const { db, marketplace, engine } = setup();
+  await engine.syncEvents();
+  const [event] = db.listEvents();
+  db.updateEvent(event.id, { enabled: 1 });
+  await engine.runCycle(); // U 9 goes 230 -> 206
+  // StubHub's copy lags: my listing still shows at the OLD price 230 and the only real competitor is gone.
+  marketplace.state.market = [{ section: 'u 9', row: 'n', quantity: 2, price: 230 }];
+  await engine.runCycle();
+  const u9 = db.listListings(event.id).find((l) => l.listing_id === 'L-1');
+  assert.equal(u9.current_price, 206, 'must not chase its own stale row up to 229');
+  assert.equal(u9.last_reason, 'no_competition');
+});
+
+test('engine pauses while the marketplace needs a login and resumes afterwards', async () => {
+  const { db, marketplace, engine } = setup();
+  await engine.syncEvents();
+  const [event] = db.listEvents();
+  db.updateEvent(event.id, { enabled: 1 });
+  let authState = 'needs_code';
+  marketplace.status = () => ({ hasSession: authState === 'ok', authState });
+  const realGet = marketplace.getMyListings;
+  marketplace.getMyListings = async () => {
+    if (authState !== 'ok') throw Object.assign(new Error('Ticket Attendant needs an authenticator code.'), { name: 'TicketAttendantAuthError' });
+    return realGet();
+  };
+  const first = await engine.runCycle();
+  assert.equal(first.errors, 1);
+  assert.equal(engine.status().authBlocked, true);
+  const second = await engine.runCycle();
+  assert.equal(second.skipped, 'auth');
+  assert.equal(db.recentLog().filter((l) => l.level === 'error').length, 1, 'logs the pause once, not every cycle');
+  authState = 'ok';
+  const third = await engine.runCycle();
+  assert.equal(third.changed, 2);
+  assert.equal(engine.status().authBlocked, false);
+});

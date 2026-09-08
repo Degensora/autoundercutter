@@ -29,6 +29,29 @@
       <div id="alertText"></div>
     </section>
 
+    <section class="card" id="authCard" hidden>
+      <h2>Ticket Attendant login</h2>
+      <p class="hint" id="authHint"></p>
+      <form id="loginForm" class="row" hidden>
+        <input id="loginUser" type="text" placeholder="Ticket Attendant username (email)" autocomplete="username" />
+        <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password" />
+        <button class="btn primary" type="submit">Log in</button>
+      </form>
+      <form id="codeForm" class="row" hidden>
+        <input id="loginCode" type="text" inputmode="numeric" placeholder="6-digit authenticator code" autocomplete="one-time-code" class="short-input" />
+        <button class="btn primary" type="submit">Submit code</button>
+        <button class="btn" type="button" id="btnRestartLogin">Start over</button>
+      </form>
+      <details class="cookie-alt">
+        <summary class="muted">Or paste a cookie from a browser where you are already logged in</summary>
+        <form id="cookieForm" class="row">
+          <input id="cookieValue" type="text" placeholder=".ASPXAUTH=…; ASP.NET_SessionId=…" autocomplete="off" />
+          <button class="btn" type="submit">Use cookie</button>
+        </form>
+      </details>
+      <div class="err" id="authError"></div>
+    </section>
+
     <section class="grid2">
       <div class="card">
         <h2>Add an event</h2>

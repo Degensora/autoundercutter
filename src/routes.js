@@ -217,6 +217,63 @@ export function createRouter({ db, engine, marketplace, config }) {
     }),
   );
 
+  // ---- marketplace login (Ticket Attendant) ----
+  const client = () => {
+    if (!marketplace.client) throw new Error('The simulated market has no login.');
+    return marketplace.client;
+  };
+  const authResult = (res, extra = {}) => ok(res, { marketplace: marketplace.status(), ...extra });
+
+  r.get(
+    '/auth/status',
+    wrap((req, res) => authResult(res)),
+  );
+
+  // Step 1: username + password (from .env, or typed into the dashboard). Ticket Attendant then asks for
+  // an authenticator code; if TA_TOTP_SECRET is set it is answered automatically.
+  r.post(
+    '/auth/login',
+    wrap(async (req, res) => {
+      const c = client();
+      if (req.body?.username && req.body?.password) c.setCredentials(String(req.body.username), String(req.body.password));
+      if (req.body?.totpSecret) c.setTotpSecret(String(req.body.totpSecret).trim());
+      try {
+        await c.login();
+        db.log('info', `Logged in to Ticket Attendant as ${c.username}`);
+        engine.runCycle({ force: true }).catch(() => {});
+        return authResult(res, { loggedIn: true });
+      } catch (err) {
+        if (c.authState === 'needs_code') return authResult(res, { loggedIn: false, needsCode: true });
+        throw err;
+      }
+    }),
+  );
+
+  // Step 2: the 6-digit code from the authenticator app.
+  r.post(
+    '/auth/code',
+    wrap(async (req, res) => {
+      const c = client();
+      await c.submitCode(req.body?.code);
+      db.log('info', `Logged in to Ticket Attendant as ${c.username} (authenticator code accepted)`);
+      engine.runCycle({ force: true }).catch(() => {});
+      authResult(res, { loggedIn: true });
+    }),
+  );
+
+  // Alternative: paste the Cookie header from a browser where you are already logged in.
+  r.post(
+    '/auth/cookie',
+    wrap(async (req, res) => {
+      const c = client();
+      c.setCookieHeader(String(req.body?.cookie || ''));
+      await marketplace.listEvents(); // proves the cookie works
+      db.log('info', 'Ticket Attendant session set from a pasted cookie');
+      engine.runCycle({ force: true }).catch(() => {});
+      authResult(res, { loggedIn: true });
+    }),
+  );
+
   r.post(
     '/marketplace/test',
     wrap(async (req, res) => {

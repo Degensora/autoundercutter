@@ -32,6 +32,7 @@ export class Engine {
     this.lastCycleAt = null;
     this.lastCycleSummary = null;
     this.nextRunAt = null;
+    this.authBlocked = false; // true while the marketplace needs a human (authenticator code / login)
   }
 
   log(level, message, ctx = {}) {
@@ -47,6 +48,7 @@ export class Engine {
       lastCycleAt: this.lastCycleAt,
       lastCycleSummary: this.lastCycleSummary,
       nextRunAt: this.nextRunAt,
+      authBlocked: this.authBlocked,
     };
   }
 
@@ -121,6 +123,12 @@ export class Engine {
     try {
       const settings = this.db.getSettings();
       summary.dryRun = Boolean(settings.dryRun);
+      if (this.authBlocked && !force) {
+        const st = this.marketplace.status();
+        if (st.authState && st.authState !== 'ok') return { skipped: 'auth', authState: st.authState };
+        this.authBlocked = false;
+        this.log('info', 'Marketplace login restored — repricing resumes');
+      }
       const events = eventId ? [this.db.getEvent(eventId)].filter(Boolean) : this.db.listEvents({ enabledOnly: true });
       for (const event of events) {
         if (!event.enabled && !force) continue;
@@ -134,8 +142,12 @@ export class Engine {
         } catch (err) {
           summary.errors++;
           this.db.updateEvent(event.id, { last_error: err.message });
+          if (err.name === 'TicketAttendantAuthError') {
+            if (!this.authBlocked) this.log('error', `Paused: ${err.message}`, { eventId: event.id });
+            this.authBlocked = true;
+            break; // no point hammering the other events until someone logs in
+          }
           this.log('error', `${event.name}: ${err.message}`, { eventId: event.id });
-          if (err.name === 'TicketAttendantAuthError') break; // no point hammering the other events
         }
       }
       summary.durationMs = Date.now() - started;
@@ -217,14 +229,23 @@ export class Engine {
       compareQuantity: Boolean(settings.compareQuantity),
     });
 
-    // Never treat one of our own listings as a competitor. The connector flags what it can; we also
-    // match on the exact (section, row, quantity, price) fingerprint of our listings as a backstop.
-    const fingerprints = new Set(
-      listings.map((l) => `${normalizeSection(l.section)}|${String(l.row).trim().toLowerCase()}|${l.quantity}|${Number(l.current_price).toFixed(2)}`),
-    );
+    // Never treat one of our own listings as a competitor. The connector flags what it can; on top of
+    // that we match the (section, row, quantity, price) fingerprint of each of our listings — at its
+    // current price AND at every price we set in the last hour, because the exchange's copy of the market
+    // can lag a few minutes behind a change we just made.
+    const fingerprints = new Set();
+    const fp = (section, row, qty, price) => `${normalizeSection(section)}|${String(row ?? '').trim().toLowerCase()}|${qty}|${Number(price).toFixed(2)}`;
+    const recentCutoff = Date.now() - 60 * 60 * 1000;
+    for (const l of listings) {
+      fingerprints.add(fp(l.section, l.row, l.quantity, l.current_price));
+      for (const h of this.db.listHistory(l.id, 20)) {
+        if (new Date(h.created_at).getTime() < recentCutoff) break;
+        if (h.old_price != null) fingerprints.add(fp(l.section, l.row, l.quantity, h.old_price));
+        if (h.new_price != null) fingerprints.add(fp(l.section, l.row, l.quantity, h.new_price));
+      }
+    }
     for (const m of market) {
-      const fp = `${normalizeSection(m.section)}|${String(m.row).trim().toLowerCase()}|${m.quantity}|${Number(m.price).toFixed(2)}`;
-      if (fingerprints.has(fp)) m.isMine = true;
+      if (fingerprints.has(fp(m.section, m.row, m.quantity, m.price))) m.isMine = true;
     }
     this.db.saveSnapshot(event.id, market);
 
